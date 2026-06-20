@@ -2,13 +2,11 @@ import os
 import requests
 import subprocess
 import tempfile
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-def download_from_drive(file_id, dest_path, access_token):
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
-    headers = {"Authorization": f"Bearer {access_token}"}
+def download_url(url, dest_path, headers=None):
     r = requests.get(url, headers=headers, stream=True)
     with open(dest_path, 'wb') as f:
         for chunk in r.iter_content(chunk_size=8192):
@@ -36,26 +34,29 @@ def health():
 @app.route('/merge', methods=['POST'])
 def merge():
     data = request.json
-    clip_ids = data.get('clipIds', [])
-    voice_id = data.get('voiceId')
+    clip_urls = data.get('clipUrls', [])
+    voice_url = data.get('voiceUrl')
+    elevenlabs_key = data.get('elevenLabsKey')
+    pexels_key = data.get('pexelsKey')
     folder_id = data.get('folderId')
     access_token = data.get('accessToken')
     topic = data.get('topic', 'reel')
 
-    if not clip_ids or not voice_id or not access_token:
-        return jsonify({"error": "Missing required fields"}), 400
+    if not clip_urls or not voice_url:
+        return jsonify({"error": "Missing clipUrls or voiceUrl"}), 400
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Download clips
         clip_paths = []
-        for i, cid in enumerate(clip_ids):
+        for i, url in enumerate(clip_urls):
             path = os.path.join(tmpdir, f"clip_{i}.mp4")
-            download_from_drive(cid, path, access_token)
+            download_url(url, path)
             clip_paths.append(path)
 
-        # Download voice
+        # Download voice from ElevenLabs
         voice_path = os.path.join(tmpdir, "voice.mp3")
-        download_from_drive(voice_id, voice_path, access_token)
+        voice_headers = {"xi-api-key": elevenlabs_key} if elevenlabs_key else None
+        download_url(voice_url, voice_path, headers=voice_headers)
 
         # Concat file
         concat_file = os.path.join(tmpdir, "concat.txt")
@@ -86,15 +87,17 @@ def merge():
             final_path
         ], check=True)
 
-        # Upload final video to Drive
-        output_name = topic.replace(' ', '_') + '_reel.mp4'
-        result = upload_to_drive(final_path, output_name, folder_id, access_token)
-
-        return jsonify({
-            "success": True,
-            "fileId": result.get('id'),
-            "fileName": output_name
-        })
+        # Upload to Drive if credentials provided
+        if access_token and folder_id:
+            output_name = topic.strip().replace(' ', '_') + '_reel.mp4'
+            result = upload_to_drive(final_path, output_name, folder_id, access_token)
+            return jsonify({
+                "success": True,
+                "fileId": result.get('id'),
+                "fileName": output_name
+            })
+        else:
+            return jsonify({"error": "No access token provided"}), 400
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)

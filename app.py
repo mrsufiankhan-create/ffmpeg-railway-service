@@ -33,30 +33,28 @@ def health():
 
 @app.route('/merge', methods=['POST'])
 def merge():
-    data = request.json
+    data = request.get_json(force=True)
     clip_urls = data.get('clipUrls', [])
-    voice_url = data.get('voiceUrl')
-    elevenlabs_key = data.get('elevenLabsKey')
-    pexels_key = data.get('pexelsKey')
+    voice_drive_id = data.get('voiceFileId')
+    drive_access_token = data.get('driveAccessToken')
     folder_id = data.get('folderId')
-    access_token = data.get('accessToken')
     topic = data.get('topic', 'reel')
 
-    if not clip_urls or not voice_url:
-        return jsonify({"error": "Missing clipUrls or voiceUrl"}), 400
+    if not clip_urls or not voice_drive_id or not drive_access_token:
+        return jsonify({"error": "Missing required fields"}), 400
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Download clips
+        # Download clips from Pexels
         clip_paths = []
         for i, url in enumerate(clip_urls):
             path = os.path.join(tmpdir, f"clip_{i}.mp4")
             download_url(url, path)
             clip_paths.append(path)
 
-        # Download voice from ElevenLabs
+        # Download voice from Drive
         voice_path = os.path.join(tmpdir, "voice.mp3")
-        voice_headers = {"xi-api-key": elevenlabs_key} if elevenlabs_key else None
-        download_url(voice_url, voice_path, headers=voice_headers)
+        voice_url = f"https://www.googleapis.com/drive/v3/files/{voice_drive_id}?alt=media"
+        download_url(voice_url, voice_path, headers={"Authorization": f"Bearer {drive_access_token}"})
 
         # Concat file
         concat_file = os.path.join(tmpdir, "concat.txt")
@@ -68,9 +66,7 @@ def merge():
         merged_path = os.path.join(tmpdir, "merged.mp4")
         subprocess.run([
             'ffmpeg', '-f', 'concat', '-safe', '0',
-            '-i', concat_file,
-            '-c', 'copy',
-            merged_path
+            '-i', concat_file, '-c', 'copy', merged_path
         ], check=True)
 
         # Mix video + audio
@@ -87,17 +83,15 @@ def merge():
             final_path
         ], check=True)
 
-        # Upload to Drive if credentials provided
-        if access_token and folder_id:
-            output_name = topic.strip().replace(' ', '_') + '_reel.mp4'
-            result = upload_to_drive(final_path, output_name, folder_id, access_token)
-            return jsonify({
-                "success": True,
-                "fileId": result.get('id'),
-                "fileName": output_name
-            })
-        else:
-            return jsonify({"error": "No access token provided"}), 400
+        # Upload to Drive
+        output_name = topic.strip().replace(' ', '_') + '_reel.mp4'
+        result = upload_to_drive(final_path, output_name, folder_id, drive_access_token)
+
+        return jsonify({
+            "success": True,
+            "fileId": result.get('id'),
+            "fileName": output_name
+        })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)

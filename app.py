@@ -12,21 +12,6 @@ def download_url(url, dest_path, headers=None):
         for chunk in r.iter_content(chunk_size=8192):
             f.write(chunk)
 
-def upload_to_drive(file_path, filename, folder_id, access_token):
-    import json
-    metadata = {"name": filename, "parents": [folder_id]}
-    headers = {"Authorization": f"Bearer {access_token}"}
-    with open(file_path, 'rb') as f:
-        r = requests.post(
-            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-            headers=headers,
-            files={
-                'metadata': ('metadata', json.dumps(metadata), 'application/json'),
-                'file': (filename, f, 'video/mp4')
-            }
-        )
-    return r.json()
-
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
@@ -35,12 +20,11 @@ def health():
 def merge():
     data = request.get_json(force=True)
     clip_urls = data.get('clipUrls', [])
-    voice_drive_id = data.get('voiceFileId')
-    drive_access_token = data.get('driveAccessToken')
-    folder_id = data.get('folderId')
+    script = data.get('script')
+    elevenlabs_key = data.get('elevenLabsKey')
     topic = data.get('topic', 'reel')
 
-    if not clip_urls or not voice_drive_id or not drive_access_token:
+    if not clip_urls or not script or not elevenlabs_key:
         return jsonify({"error": "Missing required fields"}), 400
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -51,10 +35,22 @@ def merge():
             download_url(url, path)
             clip_paths.append(path)
 
-        # Download voice from Drive
+        # Generate voice from ElevenLabs
         voice_path = os.path.join(tmpdir, "voice.mp3")
-        voice_url = f"https://www.googleapis.com/drive/v3/files/{voice_drive_id}?alt=media"
-        download_url(voice_url, voice_path, headers={"Authorization": f"Bearer {drive_access_token}"})
+        tts_response = requests.post(
+            "https://api.elevenlabs.io/v1/text-to-speech/TxGEqnHWrfWFTfGW9XjX",
+            headers={
+                "xi-api-key": elevenlabs_key,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg"
+            },
+            json={
+                "text": script,
+                "model_id": "eleven_multilingual_v2"
+            }
+        )
+        with open(voice_path, 'wb') as f:
+            f.write(tts_response.content)
 
         # Concat file
         concat_file = os.path.join(tmpdir, "concat.txt")
@@ -70,7 +66,7 @@ def merge():
         ], check=True)
 
         # Mix video + audio
-        final_path = os.path.join(tmpdir, "final.mp4")
+        final_path = os.path.join(tmpdir, output_name := topic.strip().replace(' ', '_') + '_reel.mp4')
         subprocess.run([
             'ffmpeg',
             '-i', merged_path,
@@ -83,14 +79,15 @@ def merge():
             final_path
         ], check=True)
 
-        # Upload to Drive
-        output_name = topic.strip().replace(' ', '_') + '_reel.mp4'
-        result = upload_to_drive(final_path, output_name, folder_id, drive_access_token)
+        # Return file as base64
+        import base64
+        with open(final_path, 'rb') as f:
+            video_b64 = base64.b64encode(f.read()).decode('utf-8')
 
         return jsonify({
             "success": True,
-            "fileId": result.get('id'),
-            "fileName": output_name
+            "fileName": output_name,
+            "videoBase64": video_b64
         })
 
 if __name__ == '__main__':

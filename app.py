@@ -28,17 +28,17 @@ def merge():
         return jsonify({"error": "Missing required fields"}), 400
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Download clips from Pexels
         clip_paths = []
         for i, url in enumerate(clip_urls):
             path = os.path.join(tmpdir, f"clip_{i}.mp4")
             download_url(url, path)
             clip_paths.append(path)
 
-        # Generate voice from ElevenLabs
         voice_path = os.path.join(tmpdir, "voice.mp3")
+        voice_id = "pNInz6obpgDQGcFmaJgB"
+        tts_url = "https://api.elevenlabs.io/v1/text-to-speech/" + voice_id
         tts_response = requests.post(
-            "https://api.elevenlabs.io/v1/text-to-speech/https",
+            tts_url,
             headers={
                 "xi-api-key": elevenlabs_key,
                 "Content-Type": "application/json",
@@ -54,7 +54,6 @@ def merge():
             }
         )
 
-        # Check ElevenLabs response
         if tts_response.status_code != 200:
             return jsonify({
                 "error": "ElevenLabs failed",
@@ -65,27 +64,17 @@ def merge():
         with open(voice_path, 'wb') as f:
             f.write(tts_response.content)
 
-        # Verify voice file size
-        if os.path.getsize(voice_path) < 1000:
-            return jsonify({
-                "error": "Voice file too small",
-                "size": os.path.getsize(voice_path)
-            }), 500
-
-        # Concat file
         concat_file = os.path.join(tmpdir, "concat.txt")
         with open(concat_file, 'w') as f:
             for cp in clip_paths:
                 f.write(f"file '{cp}'\n")
 
-        # Merge clips
         merged_path = os.path.join(tmpdir, "merged.mp4")
         subprocess.run([
             'ffmpeg', '-f', 'concat', '-safe', '0',
             '-i', concat_file, '-c', 'copy', merged_path
         ], check=True)
 
-        # Mix video + audio
         output_name = topic.strip().replace(' ', '_') + '.mp4'
         final_path = os.path.join(tmpdir, output_name)
         subprocess.run([
@@ -100,7 +89,6 @@ def merge():
             final_path
         ], check=True)
 
-        # Return base64
         import base64
         with open(final_path, 'rb') as f:
             video_b64 = base64.b64encode(f.read()).decode('utf-8')

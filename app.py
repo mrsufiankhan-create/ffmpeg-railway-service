@@ -22,7 +22,7 @@ def merge():
     clip_urls = data.get('clipUrls', [])
     script = data.get('script')
     elevenlabs_key = data.get('elevenLabsKey')
-    topic = data.get('topic', 'reel')
+    topic = data.get('topic', 'football')
 
     if not clip_urls or not script or not elevenlabs_key:
         return jsonify({"error": "Missing required fields"}), 400
@@ -46,11 +46,31 @@ def merge():
             },
             json={
                 "text": script,
-                "model_id": "eleven_multilingual_v2"
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75
+                }
             }
         )
+
+        # Check ElevenLabs response
+        if tts_response.status_code != 200:
+            return jsonify({
+                "error": "ElevenLabs failed",
+                "status": tts_response.status_code,
+                "detail": tts_response.text
+            }), 500
+
         with open(voice_path, 'wb') as f:
             f.write(tts_response.content)
+
+        # Verify voice file size
+        if os.path.getsize(voice_path) < 1000:
+            return jsonify({
+                "error": "Voice file too small",
+                "size": os.path.getsize(voice_path)
+            }), 500
 
         # Concat file
         concat_file = os.path.join(tmpdir, "concat.txt")
@@ -66,7 +86,8 @@ def merge():
         ], check=True)
 
         # Mix video + audio
-        final_path = os.path.join(tmpdir, output_name := topic.strip().replace(' ', '_') + '_reel.mp4')
+        output_name = topic.strip().replace(' ', '_') + '.mp4'
+        final_path = os.path.join(tmpdir, output_name)
         subprocess.run([
             'ffmpeg',
             '-i', merged_path,
@@ -79,7 +100,7 @@ def merge():
             final_path
         ], check=True)
 
-        # Return file as base64
+        # Return base64
         import base64
         with open(final_path, 'rb') as f:
             video_b64 = base64.b64encode(f.read()).decode('utf-8')

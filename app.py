@@ -38,7 +38,7 @@ def merge():
         # Generate voice from ElevenLabs
         voice_path = os.path.join(tmpdir, "voice.mp3")
         tts_response = requests.post(
-            "https://api.elevenlabs.io/v1/text-to-speech/TxGEqnHWrfWFTfGW9XjX",
+            "https://api.elevenlabs.io/v1/text-to-speech/https",
             headers={
                 "xi-api-key": elevenlabs_key,
                 "Content-Type": "application/json",
